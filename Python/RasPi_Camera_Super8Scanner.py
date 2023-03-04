@@ -27,13 +27,15 @@ import numpy as np
 import cv2 as cv
 import glob
 import os
-import serial
+#import serial
 import math
 #from serial.serialwin32 import Serial
 #import serial.tools.list_ports as port_list
 from datetime import datetime, timedelta
 import time
 import subprocess
+from RpiMotorLib import RpiMotorLib
+import RPi.GPIO as GPIO
 
 # Globals (naughty, naughty)
 camera = None
@@ -59,61 +61,6 @@ def pointInRect(point, rect):
     return False
 
 
-def MarlinWaitForReply(MarlinSerialPort: serial.Serial, echoToPrint=True) -> bool:
-    tstart = datetime.now()
-
-    while True:
-        # Wait until there is data waiting in the serial buffer
-        if MarlinSerialPort.in_waiting > 0:
-            # Read data out of the buffer until a CR/NL is found
-            serialString = MarlinSerialPort.readline()
-
-            if echoToPrint:
-                if serialString.startswith(b"echo:"):
-                    # Print the contents of the serial data
-                    print("Marlin R:", serialString.decode("Ascii"))
-
-            if serialString == b"ok\n":
-                return True
-
-            # Reset delay since last reception
-            tstart = datetime.now()
-
-        else:
-            # Abort after X seconds of not receiving anything
-            duration = datetime.now()-tstart
-            if duration.total_seconds() > 3:
-                return False
-
-
-def SendMarlinCmd(MarlinSerialPort: serial.Serial, cmd: str) -> bool:
-    #print("Sending GCODE",cmd)
-
-    if MarlinSerialPort.isOpen() == False:
-        raise Exception("Port closed")
-
-    # Flush input buffer
-    MarlinSerialPort.flushInput()
-    MarlinSerialPort.flushOutput()
-    MarlinSerialPort.read_all()
-
-    MarlinSerialPort.write(cmd.encode('utf-8'))
-    MarlinSerialPort.write(b'\n')
-    if MarlinWaitForReply(MarlinSerialPort) == False:
-        raise Exception("Bad GCODE command or not a valid reply from Marlin")
-
-    return True
-
-
-def SendMultipleMarlinCmd(MarlinSerialPort: serial.Serial, cmds: list) -> bool:
-    for cmd in cmds:
-        SendMarlinCmd(MarlinSerialPort, cmd)
-    return True
-
-
-
-
-
 def GetPreviewImage(large_image):
     preview_image = cv.resize(large_image.copy(), (640, 480))
     image_height, image_width = preview_image.shape[:2]
@@ -133,7 +80,7 @@ def GetPreviewImage(large_image):
 
 def ProcessImage(large_image, centre_box: list, draw_rects=True, exposure_level=-8.0, lower_threshold=150):
     # Contour of detected sproket needs to be this large to be classed as valid (area)
-    MIN_AREA_OF_SPROKET = 3000
+    MIN_AREA_OF_SPROKET = 3600
     MAX_AREA_OF_SPROKET = int(MIN_AREA_OF_SPROKET * 1.30)
 
     preview_image, image_height, image_width = GetPreviewImage(large_image)
@@ -145,7 +92,7 @@ def ProcessImage(large_image, centre_box: list, draw_rects=True, exposure_level=
     frame = preview_image[0:image_height, x1:x2]
 
     # Blur the image and convert to grayscale
-    matrix = (5, 9)
+    matrix = (51, 9)
     frame_blur = cv.GaussianBlur(frame, matrix, 0)
     imgGry = cv.cvtColor(frame_blur, cv.COLOR_BGR2GRAY)
 
@@ -210,75 +157,22 @@ def ProcessImage(large_image, centre_box: list, draw_rects=True, exposure_level=
     return preview_image, None, None
 
 
-def MoveFilm(marlin: serial.Serial, y: float, feed_rate: int):
-    SendMarlinCmd(marlin, "G0 Y{0:.4f} F{1}".format(y, feed_rate))
+def MoveFilm(motor: RpiMotorLib, y: float, feed_rate: int):
+    if (y < 0):
+        motor.motor_go(True, "1/4", -y, .001, False, .05)
+    else:
+        motor.motor_go(False, "1/4", y, .001, False, .05)
+    #SendMarlinCmd(marlin, "G0 Y{0:.4f} F{1}".format(y, feed_rate))
     # Dwell
     #SendMarlinCmd(marlin,"G4 P100")
     # Wait for move complete
-    SendMarlinCmd(marlin, "M400")
+    #SendMarlinCmd(marlin, "M400")
 
 
-def MoveReel(marlin: serial.Serial, z: float, feed_rate: int, wait_for_completion=True):
-    # Used to rewind the reel/take up slack reel onto spool
-    SendMarlinCmd(marlin, "G0 Z{0:.4f} F{1}".format(z, feed_rate))
-    if wait_for_completion:
-        # Wait for move complete
-        SendMarlinCmd(marlin, "M400")
-
-
-def SetMarlinLight(marlin: serial.Serial, level: int = 255):
-    # print("Light",level)
-    if level > 0:
-        # M106 Light (fan) On @ PWM level S
-        SendMarlinCmd(marlin, "M106 S{0}".format(level))
-    else:
-        # M107 Light Off
-        SendMarlinCmd(marlin, "M107")
-
-
-def ConnectToMarlin():
-    #ports = list(port_list.comports())
-    # for p in ports:
-    #    print (p)
-
-    # Connect to MARLIN
-    marlin = serial.Serial(
-        port="/dev/ttyUSB0", baudrate=250000, bytesize=8, timeout=5, stopbits=serial.STOPBITS_ONE, parity=serial.PARITY_NONE
-    )
-
-    # After initial connection Marlin sends loads of information which we ignore...
-    MarlinWaitForReply(marlin, False)
-
-    # Send setup commands...
-    # M502 Hardcoded Default Settings Loaded
-    # G21 - Millimeter Units
-    # M211 - Software Endstops (disable)
-    # G90 - Absolute Positioning
-    # M106 - Fan On (LED LIGHT)
-    # G92 - Set Position
-    # M201 - Set Print Max Acceleration (off)
-    # M18 - Disable steppers (after 15 seconds)
-    SendMultipleMarlinCmd(
-        marlin, ["M502", "G21", "M211 S0", "G90", "G92 X0 Y0 Z0", "M201 Y0", "M18 S15", "M203 X1000.00 Y1000.00 Z5000.00"])
-
-    SetMarlinLight(marlin, 255)
-
-    # M92 - Set Axis Steps-per-unit
-    # Just a fake number to keep things uniform, 10 steps
-    # 8.888 steps for reel motor, 1 unit is 1 degree = 360 degrees per revolution
-    SendMarlinCmd(marlin, "M92 Y10 Z8.888888")
-
-    # Wait for movement to complete
-    SendMarlinCmd(marlin, "M400")
-    return marlin
-
-
-def DisconnectFromMarlin(serial_port: serial.Serial):
-    # M107 Light Off
-    # M84 Steppers Off
-    SetMarlinLight(serial_port, 0)
-    SendMultipleMarlinCmd(serial_port, ["M84"])
-    serial_port.close()
+def MoveReel(motor: RpiMotorLib, z: float, feed_rate: int, wait_for_completion=True):
+    GPIO.setup(24, GPIO.OUT)
+    time.sleep(1)
+    GPIO.setup(24, GPIO.IN)
 
 
 def decode_fourcc(v):
@@ -332,7 +226,7 @@ def AutoWB(c: PiCamera, newgain=None):
 
 def SetExposure(c: PiCamera, shutter_speed: int = 1000, iso: int = 100):
     print("BEFORE: analog_gain", c.analog_gain, "digital_gain", c.digital_gain)
-    1# Fix camera gain and white balance
+    # Fix camera gain and white balance
     if c.iso != iso:
         c.iso = iso
         # Let camera settle
@@ -356,7 +250,7 @@ def on_startup_shutter_speed_trackbar(val):
     global new_shutter_speed_value
     new_shutter_speed_value=val
 
-def StartupAlignment(marlin: serial.Serial, centre_box):
+def StartupAlignment(motor: RpiMotorLib, centre_box):
     global lower_threshold, camera
     global new_shutter_speed_value,new_lower_threshold_value
     global shutter_speed, iso
@@ -364,9 +258,6 @@ def StartupAlignment(marlin: serial.Serial, centre_box):
 
 
     WINDOW_NAME='Startup Alignment'
-
-    marlin_y = 0
-    reel_z = 0
 
     return_value = False
 
@@ -466,22 +357,18 @@ def StartupAlignment(marlin: serial.Serial, centre_box):
 
         #Down
         if k == 65362:
-            marlin_y += 1
-            MoveFilm(marlin, marlin_y, 1000)
+            MoveFilm(motor, 2, 1000)
 
         if k == ord('j'):
-            marlin_y += 100
-            MoveFilm(marlin, marlin_y, 8000)
+            MoveFilm(motor, 47, 8000)
 
         #Up
         if k == 65364:
-            marlin_y -= 1
-            MoveFilm(marlin, marlin_y, 1000)
+            MoveFilm(motor, -2, 1000)
 
         if k == ord('r'):
             # Rewind tape reel
-            reel_z -= 360
-            MoveReel(marlin, reel_z, 20000, False)
+            MoveReel(motor, 360, 20000, False)
 
     camera.close()
     camera = None
@@ -635,9 +522,10 @@ def main():
     # we use the PREVIEW sized window for this
     centre_box[1] = int(image_height/2-centre_box[3]/2)
 
-    marlin = ConnectToMarlin()
+    GPIO.setmode(GPIO.BCM)
+    motor = RpiMotorLib.A4988Nema(23, 18, (-1, -1, -1), "DRV8825")
 
-    if StartupAlignment(marlin, centre_box) == True:
+    if StartupAlignment(motor, centre_box) == True:
 
         # Crude FPS calculation
         time_start = datetime.now()
@@ -648,20 +536,10 @@ def main():
         frames_already_on_spool = frame_number
         frames_to_add_to_spool = 0
 
-        # Position on film reel (in marlin Y units)
-        marlin_y = 0.0
         # Default space (in marlin Y units) between frames on the reel
-        FRAME_SPACING = 16.42
+        FRAME_SPACING = 47
         # List of positions (marlin y) where last frames were captured/found
         last_y_list = []
-
-        # Current Z (take up spool) position
-        reel_z = 0
-
-        # Reset Marlin to be zero (homed!!)
-        SendMarlinCmd(marlin, "G92 X0 Y0 Z0")
-        # Disable X and Z steppers, so take up spool rotates freely
-        SendMarlinCmd(marlin, "M18 X Z")
 
         manual_control = False
     # try:
@@ -697,9 +575,8 @@ def main():
                     INNER_DIAMETER_OF_TAKE_UP_SPOOL_MM, FRAME_HEIGHT_MM,
                     FILM_THICKNESS_MM, frames_already_on_spool, FRAMES_TO_WAIT_UNTIL_SPOOLING)
                 #print("Take up spool angle=",angle)
-                reel_z -= angle
                 # Move the stepper spool
-                MoveReel(marlin, reel_z, 8000, False)
+                MoveReel(motor, -angle, 8000, False)
                 frames_already_on_spool += FRAMES_TO_WAIT_UNTIL_SPOOLING
                 frames_to_add_to_spool -= FRAMES_TO_WAIT_UNTIL_SPOOLING
 
@@ -749,12 +626,10 @@ def main():
 
                 # Manual reel control (for when sproket is not detected)
                 if k == ord('f'):
-                    marlin_y += 1
-                    MoveFilm(marlin, marlin_y, 500)
+                    MoveFilm(motor, 4, 500)
 
                 if k == ord('b'):
-                    marlin_y -= 1
-                    MoveFilm(marlin, marlin_y, 500)
+                    MoveFilm(motor, -4, 500)
 
                 if k == ord('['):
                     lower_threshold -= 1
@@ -844,17 +719,16 @@ def main():
 
                 # sproket hole is below centre line, move reel up
                 if centre[1] > centre_y:
-                    print("FORWARD!", marlin_y, "diff pixels=", diff_pixels)
-                    marlin_y += 1.5
+                    print("FORWARD! diff pixels=", diff_pixels)
+                    y = 4
                 else:
                     # sproket if above centre line, move reel down (need to be careful about reverse feeding film reel into gate)
                     # move slowly/small steps
-                    print("REVERSE!", marlin_y,
-                          "diff pixels=", diff_pixels)
+                    print("REVERSE! diff pixels=", diff_pixels)
                     # Fixed step distance for reverse
-                    marlin_y -= 0.5
+                    y = -2
 
-                MoveFilm(marlin, marlin_y, NUDGE_FEED_RATE)
+                MoveFilm(motor, y, NUDGE_FEED_RATE)
                 continue
 
             try:
@@ -876,7 +750,7 @@ def main():
                     # Generate thumbnail of the picture and show it
                     thumbnail = cv.resize(freeze_frame, (0, 0), fx=0.50, fy=0.50)
                     thumnail_height, thumnail_width = thumbnail.shape[:2]
-                    cv.imshow("Exposure", thumbnail)
+                    #cv.imshow("Exposure", thumbnail)
 
                     # Save the image to the queue
                     q.put( {"number":frame_number,"exposure":my_exposure, "image":freeze_frame} )
@@ -889,8 +763,7 @@ def main():
 
                 # Now move film forward past the sproket hole so we don't take the same frame twice
                 # do this at a faster speed, to improve captured frames per second
-                marlin_y += FRAME_SPACING
-                MoveFilm(marlin, marlin_y, STANDARD_FEED_RATE)
+                MoveFilm(motor, FRAME_SPACING, STANDARD_FEED_RATE)
                 micro_adjustment_steps = 0
 
             except BaseException as err:
@@ -907,7 +780,6 @@ def main():
     print("Destroy windows")
     cv.destroyAllWindows()
     print("Disconnect Marlin")
-    DisconnectFromMarlin(marlin)
 
     if camera != None and camera.closed == False:
         camera.close()
