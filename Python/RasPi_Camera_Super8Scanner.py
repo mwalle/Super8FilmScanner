@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Super8Scanner.py
 #
 # (c)2021 Stuart Pittaway
@@ -171,7 +172,7 @@ def MoveFilm(motor: RpiMotorLib, y: float, feed_rate: int):
 
 def MoveReel(motor: RpiMotorLib, z: float, feed_rate: int, wait_for_completion=True):
     GPIO.setup(24, GPIO.OUT)
-    time.sleep(1)
+    time.sleep(0.75)
     GPIO.setup(24, GPIO.IN)
 
 
@@ -537,7 +538,7 @@ def main():
         frames_to_add_to_spool = 0
 
         # Default space (in marlin Y units) between frames on the reel
-        FRAME_SPACING = 47
+        FRAME_SPACING = 52
         # List of positions (marlin y) where last frames were captured/found
         last_y_list = []
 
@@ -720,13 +721,13 @@ def main():
                 # sproket hole is below centre line, move reel up
                 if centre[1] > centre_y:
                     print("FORWARD! diff pixels=", diff_pixels)
-                    y = 4
+                    y = 8
                 else:
                     # sproket if above centre line, move reel down (need to be careful about reverse feeding film reel into gate)
                     # move slowly/small steps
                     print("REVERSE! diff pixels=", diff_pixels)
                     # Fixed step distance for reverse
-                    y = -2
+                    y = -4
 
                 MoveFilm(motor, y, NUDGE_FEED_RATE)
                 continue
