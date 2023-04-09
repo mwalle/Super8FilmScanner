@@ -37,9 +37,11 @@ def OutputFolder() -> str:
 
 def ImageFolder() -> str:  
     # Image Input path - create if needed
-    path = os.path.join(os.getcwd(), "Capture")
+    #path = os.path.join(os.getcwd(), "Capture")
+    path = os.getcwd()
 
-    path = "\\\\192.168.0.66\\pi\\Super8FilmScanner\\Python\\Capture-8.0"    
+    #path = "\\\\192.168.0.66\\pi\\Super8FilmScanner\\Python\\Capture-8.0"    
+    #path = "/home/mw/repo/Super8FilmScanner/Capture-8.0"
 
     if not os.path.exists(path):
         raise FileNotFoundError(path)
@@ -60,20 +62,20 @@ def draw_border(img, pt1, pt2, color, thickness, r, d):
     cv.line(img, (x1, y1 + r), (x1, y1 + r + d), color, thickness)
     cv.ellipse(img, (x1 + r, y1 + r), (r, r), 180, 0, 90, color, thickness)
 
-    # Top right
-    cv.line(img, (x2 - r, y1), (x2 - r - d, y1), color, thickness)
-    cv.line(img, (x2, y1 + r), (x2, y1 + r + d), color, thickness)
-    cv.ellipse(img, (x2 - r, y1 + r), (r, r), 270, 0, 90, color, thickness)
+    ## Top right
+    #cv.line(img, (x2 - r, y1), (x2 - r - d, y1), color, thickness)
+    #cv.line(img, (x2, y1 + r), (x2, y1 + r + d), color, thickness)
+    #cv.ellipse(img, (x2 - r, y1 + r), (r, r), 270, 0, 90, color, thickness)
 
-    # Bottom left
-    cv.line(img, (x1 + r, y2), (x1 + r + d, y2), color, thickness)
-    cv.line(img, (x1, y2 - r), (x1, y2 - r - d), color, thickness)
-    cv.ellipse(img, (x1 + r, y2 - r), (r, r), 90, 0, 90, color, thickness)
+    ## Bottom left
+    #cv.line(img, (x1 + r, y2), (x1 + r + d, y2), color, thickness)
+    #cv.line(img, (x1, y2 - r), (x1, y2 - r - d), color, thickness)
+    #cv.ellipse(img, (x1 + r, y2 - r), (r, r), 90, 0, 90, color, thickness)
 
-    # Bottom right
-    cv.line(img, (x2 - r, y2), (x2 - r - d, y2), color, thickness)
-    cv.line(img, (x2, y2 - r), (x2, y2 - r - d), color, thickness)
-    cv.ellipse(img, (x2 - r, y2 - r), (r, r), 0, 0, 90, color, thickness)
+    ## Bottom right
+    #cv.line(img, (x2 - r, y2), (x2 - r - d, y2), color, thickness)
+    #cv.line(img, (x2, y2 - r), (x2, y2 - r - d), color, thickness)
+    #cv.ellipse(img, (x2 - r, y2 - r), (r, r), 0, 0, 90, color, thickness)
 
 
 def detectSproket(sproket_image, lower_threshold:int=210):
@@ -86,6 +88,8 @@ def detectSproket(sproket_image, lower_threshold:int=210):
     sproket_image = cv.equalizeHist(sproket_image)
     # Threshold
     _, sproket_image = cv.threshold(sproket_image, lower_threshold, 255, cv.THRESH_BINARY)    
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (100, 100))
+    sproket_image = cv.morphologyEx(sproket_image, cv.MORPH_OPEN, kernel)
 
     cv.imshow("sproket_image",cv.resize(sproket_image, (0,0), fx=0.4, fy=0.4))
 
@@ -249,20 +253,22 @@ def processImage(original_image, average_width, average_height, average_area):
 
         if Detect:
             #Take a vertical strip where the sproket should be (left hand side)
-            top_left_of_sproket_hole, bottom_right_of_sproket_hole, width_of_sproket_hole, height_of_sproket_hole, rotation, area, number_of_contours=detectSproket(image[0:h,0:int(w*0.22)], lower_t)
+            top_left_of_sproket_hole, bottom_right_of_sproket_hole, width_of_sproket_hole, height_of_sproket_hole, rotation, area, number_of_contours=detectSproket(image[0:h,0:int(w*0.205)], lower_t)
 
         untouched_image=image.copy()
 
         # draw actual detected sproket hole in grey
-        #cv.rectangle(image, top_left_of_sproket_hole, bottom_right_of_sproket_hole, (100,100,100), 3)
+        cv.rectangle(image, top_left_of_sproket_hole, bottom_right_of_sproket_hole, (100,100,100), 3)
 
         # Draw the box of recorded allowable TOP RIGHT positions (just for fun)
         if max_x>0:
             cv.rectangle(image, (min_x,min_y), (max_x,max_y), (100,100,100), 3)
 
         #Draw "average" size rectangle in red, based on detected hole
-        tl=(bottom_right_of_sproket_hole[0]-average_width,top_left_of_sproket_hole[1])
-        br=(tl[0]+average_width,tl[1]+average_height)
+        #tl=(bottom_right_of_sproket_hole[0]-average_width,top_left_of_sproket_hole[1])
+        tl=top_left_of_sproket_hole
+        #br=(tl[0]+average_width,tl[1]+average_height)
+        br=bottom_right_of_sproket_hole
         #Top right
         tr=(br[0],tl[1])
         #cv.rectangle(image, tl, br, (0,0,255), 3)
@@ -277,12 +283,13 @@ def processImage(original_image, average_width, average_height, average_area):
         # perhaps enhance the GUI to use mouse coordinates?
         # Negative offset X,Y and then W,H
         # W and H even!
-        frame_dims=(-50,-450, 1786, 1200)
+        frame_dims=(220, -440, 1650, 1200)
 
         # right hand corner of sproket hole seems to be always best aligned (manual observation) so use that as datum for the whole frame capture
         # calculate everything based on the ratio of the sproket holes
         #frame_tl=(int(tr[0]-average_width*0.165) ,int(tr[1] - average_height*1.31))
-        frame_tl=(int(tr[0]+frame_dims[0]) ,int(tr[1] + frame_dims[1]))
+        #frame_tl=(int(tr[0] + frame_dims[0]) ,int(tr[1] + frame_dims[1]))
+        frame_tl=(int(tl[0] + frame_dims[0]) ,int(tl[1] + frame_dims[1]))
 
         # Height must be divisble by 2
         #frame_br=(int(frame_tl[0]+ average_width*6.85),int(frame_tl[1]+ average_height*3.55))
@@ -296,7 +303,7 @@ def processImage(original_image, average_width, average_height, average_area):
         #print(output_w,output_h)
 
         # Highlight top right
-        #cv.circle(image, (int(tr[0]), int(tr[1])), 8, (0, 0, 100), -1)
+        cv.circle(image, (int(tl[0]), int(tl[1])), 8, (0, 0, 100), -1)
         #padding=20
 
         if frame_tl[1]<0 or frame_tl[0]<0:
@@ -305,7 +312,7 @@ def processImage(original_image, average_width, average_height, average_area):
         #elif number_of_contours>40:
         #    print("Contours",number_of_contours)
         #    manual_adjustment=True
-        elif tr[0]<min_x or tr[0]>max_x or tr[1]<min_y or tr[1]>max_y:
+        elif tl[0]<min_x or tl[0]>max_x or tl[1]<min_y or tl[1]>max_y:
             print("Outside learned bounding box")
             manual_adjustment=True
         #elif height_of_sproket_hole<(average_height-padding) or height_of_sproket_hole>(average_height+padding):
@@ -332,8 +339,9 @@ def processImage(original_image, average_width, average_height, average_area):
             k = cv.waitKeyEx(0) 
             #print("key",k)
 
+            print("key=", int(k))
             # Cursor UP
-            if k == 2490368:
+            if k == 65362:
                 #Move sproket location up
                 # change Y coords
                 top_left_of_sproket_hole=(top_left_of_sproket_hole[0],top_left_of_sproket_hole[1]-SMALL_STEP)
@@ -341,7 +349,7 @@ def processImage(original_image, average_width, average_height, average_area):
                 Detect=False
 
             # Down
-            if k == 2621440:
+            if k == 65364:
                 #Move sproket location down
                 # change Y coords
                 top_left_of_sproket_hole=(top_left_of_sproket_hole[0],top_left_of_sproket_hole[1]+SMALL_STEP)
@@ -349,14 +357,14 @@ def processImage(original_image, average_width, average_height, average_area):
                 Detect=False
 
             # left
-            if k == 2424832:
+            if k == 65361:
                 #Move sproket location left
                 # change X coords
                 top_left_of_sproket_hole=(top_left_of_sproket_hole[0]-SMALL_STEP,top_left_of_sproket_hole[1])
                 bottom_right_of_sproket_hole=(bottom_right_of_sproket_hole[0]-SMALL_STEP,bottom_right_of_sproket_hole[1])
                 Detect=False
 
-            if k == 2555904:
+            if k == 65363:
                 #Move sproket location right
                 # change X coords
                 top_left_of_sproket_hole=(top_left_of_sproket_hole[0]+SMALL_STEP,top_left_of_sproket_hole[1])
@@ -401,11 +409,11 @@ def processImage(original_image, average_width, average_height, average_area):
             if k == 27:
                 raise Exception("Abort!")
 
-            if k == ord('['):
+            if k == 46:
                 lower_t-=1
                 Detect=True
 
-            if k == ord(']'):
+            if k == 44:
                 lower_t+=1
                 Detect=True
 
@@ -432,11 +440,11 @@ def processImage(original_image, average_width, average_height, average_area):
                 return output_image            
 
             # Update our acceptable min/max ranges
-            min_x= min(min_x,tr[0])
-            max_x= max(max_x,tr[0])
+            min_x= min(min_x,tl[0])
+            max_x= max(max_x,tl[0])
 
-            min_y= min(min_y,tr[1])
-            max_y= max(max_y,tr[1])
+            min_y= min(min_y,tl[1])
+            max_y= max(max_y,tl[1])
 
             #print(min_x,min_y,max_x,max_y)
             previous_frame_top_left_of_sproket_hole=top_left_of_sproket_hole
@@ -456,8 +464,8 @@ files=Filelist(input_path,"png")
 try:
     average_sample_count=21
     average_width=250
-    average_height=328
-    average_area=80408
+    average_height=313
+    average_area=75335
 
     # Skip this for now, we have already run it!
     #average_sample_count,average_width,average_height,average_area=scanImages(files[:300])
